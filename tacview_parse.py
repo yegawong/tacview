@@ -12,31 +12,49 @@ class Parser:
     def __init__(self, lines:list) -> None:
         self.ReferenceTime = None
         self.agent = dict()
+        self.last_time = None
         self.current_time = None
         self.lines = lines 
+        self.first_frame = True
+        self.strid2intid = {}
+        self.agent_dead_next_clean_list = []
+        self.agent_dead_next_clean_flag = False
 
     def next(self):
         for num in range(len(self.lines)):
             record, value = parse_line(self.lines[num])
             match record:
                 case Record.Frame:
+                    self.last_time = self.current_time
                     self.current_time = value
-                    yield self.current_time
+                    if self.first_frame:
+                        self.first_frame = False
+                        continue
+                    if self.agent_dead_next_clean_list and self.agent_dead_next_clean_flag:
+                        [self.agent.pop(v) for v in self.agent_dead_next_clean_list]
+                        self.agent_dead_next_clean_list = []
+                        self.agent_dead_next_clean_flag = False
+                    elif self.agent_dead_next_clean_list and not self.agent_dead_next_clean_flag:
+                        self.agent_dead_next_clean_flag = True
+                    yield self.last_time
                 case Record.ReferenceTime:
                     self.ReferenceTime = value
                 case Record.Update:
-                    id, T_list, Name, Color = value
-                    if id not in self.agent:
-                        self.agent[id] = Agent()
-                    self.agent[id].update(T_list, Name, Color)
+                    strid, T_list, Name, Color = value
+                    if strid not in self.agent:
+                        if strid not in self.strid2intid:
+                            self.strid2intid[strid] = len(self.strid2intid) + 1
+                        self.agent[strid] = Agent(self.strid2intid.get(strid))
+                    self.agent[strid].update(T_list, Name, Color)
                 case Record.Remove:
-                    self.agent.pop(value)
+                    self.agent[value].state = 1
+                    self.agent_dead_next_clean_list.append(value)
                 case _:
                     pass
 
 class Agent:
-    def __init__(self) -> None:
-        self.id = None
+    def __init__(self, intid) -> None:
+        self.intid = intid
         self.Longitude = None
         self.Latitude  = None
         self.Altitude = None
@@ -51,6 +69,8 @@ class Agent:
 
         self.name = None
         self.color = None
+        self.state = 0
+        self.type = None
     
     def update(self, T_list:list, Name, Color):
         T_list.reverse()
@@ -64,7 +84,11 @@ class Agent:
 
         self.name = Name
         self.color = Color
-
+        self.camp = 0 if Color == "Red" else 1
+        self.type = 0 if Name == "F16" else 1
+    
+    def attributes_to_str(self):
+        return ' '.join([self.intid, self.Longitude, self.Latitude, self.Altitude, self.Roll, self.Pitch, self.Yaw, self.name, self.color])
 
 def parse_line(line: str):
     char = line[0] if line else None
@@ -113,4 +137,5 @@ def main():
         print(deltatime)
         print(parser.agent)
 
-main()
+# main()
+
