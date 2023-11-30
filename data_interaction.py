@@ -38,7 +38,6 @@ class DataTCPClient:
     def heart_beat_start(self):
         thread = threading.Thread(target=self.heart_beat, name="heart_beat", daemon=True)
         thread.start()
-        print(thread)
 
     def receive(self, length):
         receive_buf = b''
@@ -55,34 +54,51 @@ class DataTCPClient:
     def recv_data(self):
         while not self.ev.is_set():
             try:
-                data_buf = self.sock.recv(4)
-                if not data_buf:
+                # 1,接收2个字节，计算消息字节总长度
+                msg_len_byteNum = 2;# 消息字节总长度占用的字节数
+                msg_len_buf = self.sock.recv(msg_len_byteNum)
+                if not msg_len_buf:
                     continue
-                data_length_num = data_buf[0]
-                data_length_mul = data_buf[1]
-                msg_type_length_num = data_buf[2]
-                msg_type_length_mul = data_buf[3]
-                data_length = data_length_mul * 256 + data_length_num
-                msg_type_length = msg_type_length_mul * 256 + msg_type_length_num
+                msg_len = msg_len_buf[0]  + msg_len_buf[1] * 256
 
-                data_buf = self.receive(data_length)
-                if not data_buf:
-                    print('recevice data buffer failed!')
+                # 2,再接收2个字节，计算消息类型的字节长度
+                msg_type_byteNum = 2 # 消息类型的字节长度占用的字节数
+                msg_type_buf = self.sock.recv(msg_type_byteNum)
+                if not msg_type_buf:
+                    continue
+                msg_type_len = msg_type_buf[0]  + msg_type_buf[1] * 256
+
+                # 3,根据消息类型的字节长度，接收消息类型的字节数据
+                msg_type_buf = self.receive(msg_type_len)
+                if not msg_type_buf:
+                    print('recevice msg_type buffer failed!')
                     break
-                proto_name = data_buf[:msg_type_length]
-                json_data = data_buf[msg_type_length:]
-                print("receive data:--------------------")
-                print("proto_name", proto_name.decode())
-                print("json_data", json.loads(json_data))
+
+                # 4,计算消息数据的字节长度
+                msg_data_len = msg_len - msg_type_byteNum - msg_type_len
+                
+                # 5，根据消息数据的字节长度, 接收消息数据的字节数据
+                msg_data_buf = self.receive(msg_data_len)
+                if not msg_data_buf:
+                    print('recevice msg_data buffer failed!')
+                    break
+
+                print("--------------------")
+                print("receive data:")
+                print("proto_name", msg_type_buf.decode())
+                print("json_data", json.loads(msg_data_buf))
+                print("--------------------")
+                
             except ConnectionError as e:
                 print("ERROR:{}".format(e))
                 self.sock.close()
                 break
 
     def send_data(self, proto_name, data):
+        print("send_data " + proto_name)
         try:
             proto_name_len = len(proto_name.encode())
-            data_len = len(data) + proto_name_len + 4
+            data_len = len(data) + proto_name_len + 2 # 此处应该+2，不是+4，对接文档中的消息格式图有误，在对接文档的更新版本中会更正错误。
             data_length_num = data_len % 256
             data_length_mul = data_len // 256
             msg_type_length_num = proto_name_len % 256
@@ -124,11 +140,13 @@ def set_airinfo(tmp_air_info, dist_dict):
 
 
 if __name__ == '__main__':
+    print("启动")
+    
     args=define_myArgs()
     result_path = os.path.abspath(args.filein)
     print('filein:', result_path)
 
-    my_client = DataTCPClient('127.0.0.1', 8888)
+    my_client = DataTCPClient('192.168.1.130', 8888)
     my_client.start()
     MsgSocket = {"protoName": "MsgSocket", "id": 2}
     my_client.send_data("MsgSocket", json.dumps(MsgSocket).encode())
@@ -139,6 +157,7 @@ if __name__ == '__main__':
     AirInfo = {"id": 0, "longitude": 0.0, "latitude":0.0, "altitude": 0.0, "roll": 0.0,
                 "pitch":0.0, "yaw":0.0, "name": "", "camp": 0, "type": 0, "state": 0}
     MsgGameInfo = {"protoName": "MsgGameInfo", "gameInfo": GameInfo}
+
 
     my_client.heart_beat_start()
     filepath = result_path    # Fill in the file path
@@ -163,4 +182,5 @@ if __name__ == '__main__':
             print("ERROR:{}".format(e))
             break
     my_client.stop()
-
+    
+    
