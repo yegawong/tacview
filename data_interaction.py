@@ -9,6 +9,7 @@ import copy
 import signal
 
 import tacview_parse
+import random
 
 
 def exit_handler(signum, frame):
@@ -83,11 +84,11 @@ class DataTCPClient:
                     print('recevice msg_data buffer failed!')
                     break
 
-                print("--------------------")
-                print("receive data:")
-                print("proto_name", msg_type_buf.decode())
-                print("json_data", json.loads(msg_data_buf))
-                print("--------------------")
+                # print("--------------------")
+                # print("receive data:")
+                # print("proto_name", msg_type_buf.decode())
+                # print("json_data", json.loads(msg_data_buf))
+                # print("--------------------")
                 
             except ConnectionError as e:
                 print("ERROR:{}".format(e))
@@ -95,7 +96,7 @@ class DataTCPClient:
                 break
 
     def send_data(self, proto_name, data):
-        print("send_data " + proto_name)
+        # print("send_data " + proto_name)
         try:
             proto_name_len = len(proto_name.encode())
             data_len = len(data) + proto_name_len + 2 # 此处应该+2，不是+4，对接文档中的消息格式图有误，在对接文档的更新版本中会更正错误。
@@ -134,9 +135,19 @@ def set_airinfo(tmp_air_info, dist_dict):
     tmp_air_info["pitch"] = dist_dict.Pitch
     tmp_air_info["yaw"] = dist_dict.Yaw
     tmp_air_info["name"] = dist_dict.name
+    tmp_air_info["name"] = "J20"
     tmp_air_info["camp"] = dist_dict.camp
     tmp_air_info["type"] = dist_dict.type
     tmp_air_info["state"] = dist_dict.state
+
+    tmp_air_info["aoa"] = random.randint(0, 180)
+    tmp_air_info["ssa"] = random.randint(0, 180)
+    # tmp_air_info["throttle"] = random.randint(0, 100)
+    tmp_air_info["throttle"] = 100
+    for k in tmp_air_info["j20_Info"].keys():
+        tmp_air_info["j20_Info"][k] = random.randint(0, 180)
+    tmp_air_info["j20_Info"]["angle_EngineHorizontal"] = 30
+    tmp_air_info["j20_Info"]["angle_EngineVertical"] = 30
 
 
 if __name__ == '__main__':
@@ -146,16 +157,21 @@ if __name__ == '__main__':
     result_path = os.path.abspath(args.filein)
     print('filein:', result_path)
 
-    my_client = DataTCPClient('192.168.1.130', 8888)
+    my_client = DataTCPClient('127.0.0.1', 8888)
     my_client.start()
     MsgSocket = {"protoName": "MsgSocket", "id": 2}
     my_client.send_data("MsgSocket", json.dumps(MsgSocket).encode())
 
-    MsgTaskInit = {"protoName": "MsgTaskInit", "redNum": 0, "blueNum": 0, "longitude": 0.0, "latitude": 0.0}
+    MsgTaskInit = {"protoName": "MsgTaskInit", "redNum": 1, "blueNum": 1, "longitude": 120.0, "latitude": 60.0}
+    bytearray_str = json.dumps(MsgTaskInit).encode()
+    my_client.send_data("MsgTaskInit", bytearray_str)
 
     GameInfo = {"time": 0.0, "airs": []}
+    J20_Info = {"angle_LeftVerticalTail": 0.0, "angle_RightVerticalTail": 0.0, "angle_LeftCanard": 0.0, "angle_RightCanard": 0.0,
+               "angle_LeftElevon": 0.0, "angle_RightElevon": 0.0, "angle_EngineHorizontal": 0.0, "angle_EngineVertical": 0.0, }
     AirInfo = {"id": 0, "longitude": 0.0, "latitude":0.0, "altitude": 0.0, "roll": 0.0,
-                "pitch":0.0, "yaw":0.0, "name": "", "camp": 0, "type": 0, "state": 0}
+                "pitch":0.0, "yaw":0.0, "name": "", "camp": 0, "type": 0, "state": 0, 
+                "number": "Atest", "aoa": 60.0, "ssa": 30.0, "throttle": 0, "j20_Info": J20_Info,}
     MsgGameInfo = {"protoName": "MsgGameInfo", "gameInfo": GameInfo}
 
 

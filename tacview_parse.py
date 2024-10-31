@@ -40,12 +40,12 @@ class Parser:
                 case Record.ReferenceTime:
                     self.ReferenceTime = value
                 case Record.Update:
-                    strid, T_list, Name, Color = value
+                    strid, T_list, Name, Color, aert = value
                     if strid not in self.agent:
                         if strid not in self.strid2intid:
                             self.strid2intid[strid] = len(self.strid2intid) + 1
                         self.agent[strid] = Agent(self.strid2intid.get(strid))
-                    self.agent[strid].update(T_list, Name, Color)
+                    self.agent[strid].update(T_list, Name, Color, aert)
                 case Record.Remove:
                     self.agent[value].state = 1
                     self.agent_dead_next_clean_list.append(value)
@@ -71,8 +71,9 @@ class Agent:
         self.color = None
         self.state = 0
         self.type = None
+        self.aert = [0]*4
     
-    def update(self, T_list:list, Name, Color):
+    def update(self, T_list:list, Name, Color, aert:list):
         T_list.reverse()
         self.Longitude = T_list.pop()
         self.Latitude  = T_list.pop()
@@ -86,6 +87,8 @@ class Agent:
         self.color = Color
         self.camp = 0 if Color == "Red" else 1
         self.type = 0 if Name == "F16" else 1
+        if aert:
+            self.aert = aert
     
     def attributes_to_str(self):
         return ' '.join([self.intid, self.Longitude, self.Latitude, self.Altitude, self.Roll, self.Pitch, self.Yaw, self.name, self.color])
@@ -115,7 +118,13 @@ def parse_line(line: str):
                 T_list = value.pop().split('=')[-1].split('|')
                 Name = value.pop().split('=')[-1]
                 Color = value.pop().split('=')[-1]
-                return Record.Update, (id, T_list, Name, Color)
+                if 'F' in id and 'Misc' in Name:
+                    return None, None
+                aert = None
+                if len(value) > 0:
+                    aert = value.pop().split('|')
+                    aert = list(map(float, aert))
+                return Record.Update, (id, T_list, Name, Color, aert)
             try:
                 return parse_agent()
             except:
@@ -130,12 +139,16 @@ def safe_read(filepath):
         return lines
 
 def main():
-    filepath = r''    # Fill in the file path
+    filepath = r'20231030lqh\render_1v1_action.txt.acmi'    # Fill in the file path
+    # filepath = r'20231030lqh\render_1v1_tacview.txt.acmi'    # Fill in the file path
     lines = safe_read(filepath)
     parser = Parser(lines)
     for deltatime in parser.next():
         print(deltatime)
         print(parser.agent)
+        if 'A0100' in parser.agent:
+            print(parser.agent['A0100'].aert)
 
-# main()
+if __name__ == "__main__":
+    main()
 

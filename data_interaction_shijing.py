@@ -1,0 +1,249 @@
+import socket
+import threading
+import json
+import time
+import struct
+import argparse
+import os
+import copy
+import signal
+
+import tacview_parse
+import random
+import queue
+
+
+def exit_handler(signum, frame):
+    exit(0)
+
+signal.signal(signal.SIGINT, exit_handler)
+signal.signal(signal.SIGTERM, exit_handler)
+
+class DataTCPClient:
+    def __init__(self, addr, port):
+        self.addr = (addr, port)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.bind(self.addr)
+        self.sock.listen(5)
+        self.ev = threading.Event()
+        self.thread_safe_queue = queue.Queue(10)
+        self.client_num = 0
+
+    def server_start(self):
+        print("start server")
+        self.ev.clear()
+        thread = threading.Thread(target=self.create_server_socket, name="recv_data", daemon=True)
+        thread.start()
+
+    def create_server_socket(self):
+        self.client_num = 0     # 标记客户端的编号
+        while not self.ev.is_set():
+            self.client_num += 1
+            conn, address = self.sock.accept()
+            client_handler = threading.Thread(target=self.handle_client, args=(conn, address, self.client_num), daemon=True)
+            client_handler.start()
+    
+    # 处理收发数据
+    def handle_client(self, conn, address, num):
+        while not self.ev.is_set():
+            if self.thread_safe_queue.empty():
+                time.sleep(0.1)
+            try:
+                msg = self.thread_safe_queue.get()
+                conn.send(msg)
+            except:
+                break
+        conn.close()
+
+    def start(self):
+        print("start client")
+        self.ev.clear()
+        self.sock.connect(self.addr)
+        thread = threading.Thread(target=self.recv_data, name="recv_data", daemon=True)
+        thread.start()
+
+    def heart_beat(self):
+        while not self.ev.is_set():
+            MsgAckHeart = {"protoName": "MsgAckHeart"}
+            self.send_data("MsgAckHeart", json.dumps(MsgAckHeart).encode())
+            time.sleep(0.1)
+
+    def heart_beat_start(self):
+        thread = threading.Thread(target=self.heart_beat, name="heart_beat", daemon=True)
+        thread.start()
+
+    # def receive(self, length):
+    #     receive_buf = b''
+    #     receive_length = 0
+    #     while receive_length < length:
+    #         once_buf = self.sock.recv(length - receive_length)
+    #         if not once_buf:
+    #             print('receive once buf is null')
+    #             return None
+    #         receive_buf += once_buf
+    #         receive_length = len(receive_buf)
+    #     return receive_buf
+
+    # def recv_data(self):
+    #     while not self.ev.is_set():
+    #         try:
+    #             # 1,接收2个字节，计算消息字节总长度
+    #             msg_len_byteNum = 2;# 消息字节总长度占用的字节数
+    #             msg_len_buf = self.sock.recv(msg_len_byteNum)
+    #             if not msg_len_buf:
+    #                 continue
+    #             msg_len = msg_len_buf[0]  + msg_len_buf[1] * 256
+
+    #             # 2,再接收2个字节，计算消息类型的字节长度
+    #             msg_type_byteNum = 2 # 消息类型的字节长度占用的字节数
+    #             msg_type_buf = self.sock.recv(msg_type_byteNum)
+    #             if not msg_type_buf:
+    #                 continue
+    #             msg_type_len = msg_type_buf[0]  + msg_type_buf[1] * 256
+
+    #             # 3,根据消息类型的字节长度，接收消息类型的字节数据
+    #             msg_type_buf = self.receive(msg_type_len)
+    #             if not msg_type_buf:
+    #                 print('recevice msg_type buffer failed!')
+    #                 break
+
+    #             # 4,计算消息数据的字节长度
+    #             msg_data_len = msg_len - msg_type_byteNum - msg_type_len
+                
+    #             # 5，根据消息数据的字节长度, 接收消息数据的字节数据
+    #             msg_data_buf = self.receive(msg_data_len)
+    #             if not msg_data_buf:
+    #                 print('recevice msg_data buffer failed!')
+    #                 break
+
+    #             # print("--------------------")
+    #             # print("receive data:")
+    #             # print("proto_name", msg_type_buf.decode())
+    #             # print("json_data", json.loads(msg_data_buf))
+    #             # print("--------------------")
+                
+    #         except ConnectionError as e:
+    #             print("ERROR:{}".format(e))
+    #             self.sock.close()
+    #             break
+
+    def send_data(self, proto_name, data):
+        # print("send_data " + proto_name)
+        try:
+            proto_name_len = len(proto_name.encode())
+            data_len = len(data) + proto_name_len + 2 # 此处应该+2，不是+4，对接文档中的消息格式图有误，在对接文档的更新版本中会更正错误。
+            data_length_num = data_len % 256
+            data_length_mul = data_len // 256
+            msg_type_length_num = proto_name_len % 256
+            msg_type_length_mul = proto_name_len // 256
+            byte_number_header = bytes([data_length_num,data_length_mul,msg_type_length_num,msg_type_length_mul])
+
+            data = byte_number_header + proto_name.encode() + data
+            if self.thread_safe_queue.not_full:
+                self.thread_safe_queue.put(data)
+        except OSError as e:
+            self.stop()
+            print("ERROR:{}".format(e))
+            raise e
+
+    def stop(self):
+        if self.ev.is_set(): return
+        self.sock.close()
+        self.ev.wait(1)
+        self.ev.set()
+
+
+def define_myArgs():
+    argparser = argparse.ArgumentParser(description="读取文件并进行解析")
+    argparser.add_argument('--filein', '-f', help='读取的源文件目录', default=r'C:\Users\Yega\Desktop\Plane\软件\视景软件\20231030lqh\1v1_带弹.acmi')
+    args=argparser.parse_args()
+    return args
+
+def set_airinfo(tmp_air_info, dist_dict):
+    tmp_air_info["id"] = dist_dict.intid
+    tmp_air_info["longitude"] = dist_dict.Longitude
+    tmp_air_info["latitude"] = dist_dict.Latitude   
+    tmp_air_info["height"] = dist_dict.Altitude
+    tmp_air_info["altitude"] = dist_dict.Altitude
+    tmp_air_info["roll"] = dist_dict.Roll
+    tmp_air_info["pitch"] = dist_dict.Pitch
+    tmp_air_info["yaw"] = dist_dict.Yaw
+    tmp_air_info["name"] = dist_dict.name
+    tmp_air_info["name"] = "J20"
+    tmp_air_info["camp"] = dist_dict.camp
+    tmp_air_info["type"] = dist_dict.type
+    tmp_air_info["state"] = dist_dict.state
+
+    tmp_air_info["aoa"] = random.randint(0, 180)
+    tmp_air_info["ssa"] = random.randint(0, 180)
+    # tmp_air_info["throttle"] = random.randint(0, 100)
+    tmp_air_info["throttle"] = 100
+    for k in tmp_air_info["j20_Info"].keys():
+        tmp_air_info["j20_Info"][k] = random.randint(0, 180)
+    tmp_air_info["j20_Info"]["angle_EngineHorizontal"] = 30
+    tmp_air_info["j20_Info"]["angle_EngineVertical"] = 30
+
+
+if __name__ == '__main__':
+    print("启动")
+    
+    args=define_myArgs()
+    result_path = os.path.abspath(args.filein)
+    print('filein:', result_path)
+
+    my_server = DataTCPClient('127.0.0.1', 8888)
+    my_server.server_start()
+    while my_server.client_num == 0:
+        time.sleep(0.1)
+    my_server.heart_beat_start()
+
+    # MsgSocket = {"protoName": "MsgSocket", "id": 2}
+    # my_server.send_data("MsgSocket", json.dumps(MsgSocket).encode())
+
+    MsgWatherSetting = {"protoName":"MsgWatherSetting", "watherId": 5}
+    my_server.send_data("MsgSocket", json.dumps(MsgWatherSetting).encode())
+
+    MsgMapInit = {"protoName": "MsgMapInit", "mapType": 0}
+    my_server.send_data("MsgMapInit", json.dumps(MsgMapInit).encode())
+
+    MsgAckHeart = {"protoName": "MsgAckHeart"}
+    my_server.send_data("MsgAckHeart", json.dumps(MsgAckHeart).encode())
+
+    # MsgTaskInit = {"protoName": "MsgTaskInit", "redNum": 1, "blueNum": 1, "longitude": 120.0, "latitude": 60.0}
+    # bytearray_str = json.dumps(MsgTaskInit).encode()
+    # my_server.send_data("MsgTaskInit", bytearray_str)
+
+    GameInfo = {"time": 0.0, "airs": []}
+    J20_Info = {"angle_LeftVerticalTail": 0.0, "angle_RightVerticalTail": 0.0, "angle_LeftCanard": 0.0, "angle_RightCanard": 0.0,
+               "angle_LeftElevon": 0.0, "angle_RightElevon": 0.0, "angle_EngineHorizontal": 0.0, "angle_EngineVertical": 0.0, }
+    AirInfo = {"time":0.0, "id": 1291877822, "longitude": 0.0, "latitude":0.0, "height":0.0, "altitude": 0.0, "roll": 0.0,
+                "pitch":0.0, "yaw":0.0, "name": "F16", "camp": 0, "type": 0, "state": 0, 
+                "number": "Atest", "aoa": 60.0, "ssa": 30.0, "throttle": 0, "j20_Info": J20_Info,}
+    MsgGameInfo = {"protoName": "MsgGameInfo", "gameInfo": GameInfo}
+
+
+    # my_client.heart_beat_start()
+    filepath = result_path    # Fill in the file path
+    lines = tacview_parse.safe_read(filepath)
+    tacview_parser = tacview_parse.Parser(lines)
+    last_deltatime = 0.0
+    for deltatime in tacview_parser.next():
+        time.sleep(deltatime-last_deltatime)
+        last_deltatime = deltatime
+
+        try:
+            GameInfo["time"] = deltatime
+            GameInfo["airs"] = []
+            for strid,dist_dict in tacview_parser.agent.items():
+                tmp_air_info = copy.deepcopy(AirInfo)
+                set_airinfo(tmp_air_info, dist_dict)
+                GameInfo["airs"].append(tmp_air_info)
+            # print("MsgGameInfo", MsgGameInfo)
+            bytearray_str = json.dumps(MsgGameInfo).encode()
+            my_server.send_data("MsgGameInfo", bytearray_str)
+        except OSError as e:
+            print("ERROR:{}".format(e))
+            break
+    my_server.stop()
+    
+    
